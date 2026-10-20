@@ -26,10 +26,15 @@ import com.karthiban.powermotivation.model.DisplayContext
 import com.karthiban.powermotivation.model.MediaItemEntity
 import com.karthiban.powermotivation.model.MediaType
 import com.karthiban.powermotivation.model.ScaleMode
-import com.karthiban.powermotivation.widget.BaseMotivationWidgetProvider
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+/**
+ * Lock Screen Automatic Widget Player:
+ * Wakes automatically when the Lock Screen turns on, plays video immediately,
+ * allows swiping Left/Right on the widget to change video/photo,
+ * and allows swiping Up or tapping outside the widget to unlock the phone normally.
+ */
 @UnstableApi
 class WidgetPlayerActivity : AppCompatActivity() {
 
@@ -37,7 +42,7 @@ class WidgetPlayerActivity : AppCompatActivity() {
     private var exoPlayer: ExoPlayer? = null
     private lateinit var gestureDetector: GestureDetector
 
-    private var displayContext: DisplayContext = DisplayContext.HOME_SCREEN
+    private var displayContext: DisplayContext = DisplayContext.LOCK_SCREEN
     private var settings: ContextSettings = ContextSettings()
     private var playlist: List<MediaItemEntity> = emptyList()
     private var currentIndex: Int = 0
@@ -45,26 +50,15 @@ class WidgetPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val modeStr = intent.getStringExtra(EXTRA_CONTEXT_MODE) ?: DisplayContext.HOME_SCREEN.name
+        val modeStr = intent.getStringExtra(EXTRA_CONTEXT_MODE) ?: DisplayContext.LOCK_SCREEN.name
         displayContext = DisplayContext.valueOf(modeStr)
 
-        if (displayContext == DisplayContext.LOCK_SCREEN) {
-            configureLockScreenWindow()
-        }
+        configureLockScreenWindow()
 
         binding = ActivityWidgetPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        if (displayContext == DisplayContext.HOME_SCREEN) {
-            val preset = intent.getStringExtra(EXTRA_SIZE_PRESET) ?: "LARGE"
-            configureFloatingWidgetDimensions(preset)
-        } else {
-            window.setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT
-            )
-        }
-
+        configureLockWidgetBoxDimensions()
         setupSwipeGestureDetector()
         setupVolumeControl()
         loadContextAndPlay()
@@ -74,42 +68,40 @@ class WidgetPlayerActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
+        }
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        )
+    }
+
+    private fun configureLockWidgetBoxDimensions() {
+        val metrics = resources.displayMetrics
+        val density = metrics.density
+        window.attributes = window.attributes.apply {
+            width = (metrics.widthPixels * 0.90f).toInt()
+            height = (260 * density).toInt()
+            gravity = Gravity.CENTER
+            dimAmount = 0.0f
         }
     }
 
-    private fun configureFloatingWidgetDimensions(preset: String) {
-        val metrics = resources.displayMetrics
-        val density = metrics.density
-        val widthPx: Int
-        val heightPx: Int
-
-        if (preset == "SMALL") {
-            widthPx = (200 * density).toInt()
-            heightPx = (200 * density).toInt()
-        } else {
-            widthPx = (metrics.widthPixels * 0.90f).toInt()
-            heightPx = (280 * density).toInt()
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        if (event?.action == MotionEvent.ACTION_OUTSIDE) {
+            // Tapping outside the Lock Screen widget dismisses it so user can enter PIN/Pattern
+            finish()
+            return true
         }
-
-        window.attributes = window.attributes.apply {
-            width = widthPx
-            height = heightPx
-            gravity = Gravity.CENTER
-            dimAmount = 0.15f
-        }
-        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        return super.onTouchEvent(event)
     }
 
     private fun setupSwipeGestureDetector() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            private val SWIPE_THRESHOLD = 80
-            private val SWIPE_VELOCITY_THRESHOLD = 80
+            private val SWIPE_THRESHOLD = 70
+            private val SWIPE_VELOCITY_THRESHOLD = 70
 
             override fun onDown(e: MotionEvent): Boolean = true
 
@@ -132,10 +124,7 @@ class WidgetPlayerActivity : AppCompatActivity() {
                         navigateRelative(-1)
                     }
                     return true
-                } else if (displayContext == DisplayContext.LOCK_SCREEN &&
-                    diffY < -SWIPE_THRESHOLD * 1.5 &&
-                    abs(velocityY) > SWIPE_VELOCITY_THRESHOLD
-                ) {
+                } else if (diffY < -SWIPE_THRESHOLD && abs(velocityY) > SWIPE_VELOCITY_THRESHOLD) {
                     val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         km.requestDismissKeyguard(this@WidgetPlayerActivity, null)
@@ -160,9 +149,6 @@ class WidgetPlayerActivity : AppCompatActivity() {
                 settings = settings.copy(isSoundEnabled = newSoundState)
                 applyAudioSettingsToPlayer()
                 updateVolumeIconVisibility(playlist.getOrNull(currentIndex))
-                if (displayContext == DisplayContext.HOME_SCREEN) {
-                    BaseMotivationWidgetProvider.notifyAllWidgetsChanged(this@WidgetPlayerActivity)
-                }
             }
         }
     }
@@ -183,8 +169,7 @@ class WidgetPlayerActivity : AppCompatActivity() {
             }
 
             binding.emptyStateText.visibility = View.GONE
-            val requestedIndex = intent.getIntExtra(EXTRA_START_INDEX, settings.currentIndex)
-            currentIndex = requestedIndex.coerceIn(playlist.indices)
+            currentIndex = settings.currentIndex.coerceIn(playlist.indices)
             renderCurrentMedia()
         }
     }
@@ -210,7 +195,7 @@ class WidgetPlayerActivity : AppCompatActivity() {
             binding.exoPlayerView.visibility = View.GONE
             binding.photoImageView.visibility = View.VISIBLE
 
-            val bmp = PowerMotivationApp.instance.mediaRepository.loadScaledBitmap(item, 1440, 1440)
+            val bmp = PowerMotivationApp.instance.mediaRepository.loadScaledBitmap(item, 1280, 1280)
             if (bmp != null) {
                 binding.photoImageView.setImageBitmap(bmp)
             } else {

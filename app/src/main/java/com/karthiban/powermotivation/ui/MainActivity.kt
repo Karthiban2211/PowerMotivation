@@ -3,8 +3,11 @@ package com.karthiban.powermotivation.ui
 import android.app.WallpaperManager
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -32,6 +35,8 @@ class MainActivity : AppCompatActivity() {
         if (uris.isNotEmpty()) {
             lifecycleScope.launch {
                 PowerMotivationApp.instance.mediaRepository.importMediaUris(uris)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+                startAutoplayWidgetEngine()
             }
         }
     }
@@ -44,16 +49,50 @@ class MainActivity : AppCompatActivity() {
         setupMediaLibraryRecyclerView()
         setupActionButtons()
         observeSettingsAndLibrary()
+
+        // Automatically start the Always-On Home & Lock Widget Engine if overlay permission is granted
+        if (Settings.canDrawOverlays(this)) {
+            startAutoplayWidgetEngine()
+        }
+    }
+
+    private fun startAutoplayWidgetEngine() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(
+                this,
+                "Please enable 'Display over other apps' so the video widget can autoplay on your Home & Lock screen!",
+                Toast.LENGTH_LONG
+            ).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            return
+        }
+        val serviceIntent = Intent(this, LockScreenKeyguardService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+        LockScreenKeyguardService.notifyEngineReload(this)
     }
 
     private fun setupMediaLibraryRecyclerView() {
         val repo = PowerMotivationApp.instance.mediaRepository
         mediaAdapter = MediaAdapter(
             onCycleTarget = { item ->
-                lifecycleScope.launch { repo.cyclePlaylistTarget(item) }
+                lifecycleScope.launch {
+                    repo.cyclePlaylistTarget(item)
+                    LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+                }
             },
             onDelete = { item ->
-                lifecycleScope.launch { repo.removeMedia(item) }
+                lifecycleScope.launch {
+                    repo.removeMedia(item)
+                    LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+                }
             }
         )
 
@@ -76,6 +115,7 @@ class MainActivity : AppCompatActivity() {
                 val currentList = mediaAdapter.currentList
                 lifecycleScope.launch {
                     repo.moveItem(from, to, currentList)
+                    LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
                 }
                 return true
             }
@@ -92,15 +132,15 @@ class MainActivity : AppCompatActivity() {
             pickMultipleMediaLauncher.launch(arrayOf("image/*", "video/*"))
         }
 
+        binding.btnLaunchFloatingWidget.text = "Activate Autoplay Widget"
         binding.btnLaunchFloatingWidget.setOnClickListener {
-            lifecycleScope.launch {
-                val homeSettings = settingsRepo.getSettingsSync(DisplayContext.HOME_SCREEN)
-                val intent = Intent(this@MainActivity, WidgetPlayerActivity::class.java).apply {
-                    putExtra(WidgetPlayerActivity.EXTRA_CONTEXT_MODE, DisplayContext.HOME_SCREEN.name)
-                    putExtra(WidgetPlayerActivity.EXTRA_SIZE_PRESET, homeSettings.widgetSizePreset)
-                }
-                startActivity(intent)
-            }
+            startAutoplayWidgetEngine()
+            // Also open Usage Access settings if user wants automatic hide when opening other apps
+            Toast.makeText(
+                this,
+                "Autoplay Home & Lock Screen Widget Activated! Go to your Home Screen or Lock Screen.",
+                Toast.LENGTH_LONG
+            ).show()
         }
 
         binding.btnActivateLockWallpaper.setOnClickListener {
@@ -122,59 +162,79 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 settingsRepo.updateEnabled(DisplayContext.HOME_SCREEN, isChecked)
                 BaseMotivationWidgetProvider.notifyAllWidgetsChanged(this@MainActivity)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
             }
         }
         binding.switchHomeAutoplay.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateAutoPlay(DisplayContext.HOME_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateAutoPlay(DisplayContext.HOME_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.switchHomeSound.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch {
                 settingsRepo.updateSoundEnabled(DisplayContext.HOME_SCREEN, isChecked)
                 BaseMotivationWidgetProvider.notifyAllWidgetsChanged(this@MainActivity)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
             }
         }
         binding.switchHomeLoop.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateLoop(DisplayContext.HOME_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateLoop(DisplayContext.HOME_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.rgHomeScale.setOnCheckedChangeListener { _, checkedId ->
             val mode = if (checkedId == binding.rbHomeCrop.id) ScaleMode.CROP else ScaleMode.FIT
             lifecycleScope.launch {
                 settingsRepo.updateScaleMode(DisplayContext.HOME_SCREEN, mode)
                 BaseMotivationWidgetProvider.notifyAllWidgetsChanged(this@MainActivity)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
             }
         }
         binding.rgHomeSizePreset.setOnCheckedChangeListener { _, checkedId ->
             val preset = if (checkedId == binding.rbHomeSizeSmall.id) "SMALL" else "LARGE"
-            lifecycleScope.launch { settingsRepo.updateWidgetSizePreset(preset) }
+            lifecycleScope.launch {
+                settingsRepo.updateWidgetSizePreset(preset)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
 
         binding.switchLockEnabled.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateEnabled(DisplayContext.LOCK_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateEnabled(DisplayContext.LOCK_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.switchLockAutoplay.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateAutoPlay(DisplayContext.LOCK_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateAutoPlay(DisplayContext.LOCK_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.switchLockSound.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateSoundEnabled(DisplayContext.LOCK_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateSoundEnabled(DisplayContext.LOCK_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.switchLockLoop.setOnCheckedChangeListener { _, isChecked ->
-            lifecycleScope.launch { settingsRepo.updateLoop(DisplayContext.LOCK_SCREEN, isChecked) }
+            lifecycleScope.launch {
+                settingsRepo.updateLoop(DisplayContext.LOCK_SCREEN, isChecked)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.rgLockScale.setOnCheckedChangeListener { _, checkedId ->
             val mode = if (checkedId == binding.rbLockCrop.id) ScaleMode.CROP else ScaleMode.FIT
-            lifecycleScope.launch { settingsRepo.updateScaleMode(DisplayContext.LOCK_SCREEN, mode) }
+            lifecycleScope.launch {
+                settingsRepo.updateScaleMode(DisplayContext.LOCK_SCREEN, mode)
+                LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
+            }
         }
         binding.switchLockKeyguardOverlay.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch { settingsRepo.updateKeyguardWake(isChecked) }
-            val serviceIntent = Intent(this, LockScreenKeyguardService::class.java)
             if (isChecked) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
-            } else {
-                stopService(serviceIntent)
+                startAutoplayWidgetEngine()
             }
         }
     }
