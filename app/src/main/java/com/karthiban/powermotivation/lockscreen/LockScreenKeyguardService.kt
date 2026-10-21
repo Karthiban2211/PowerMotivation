@@ -29,15 +29,6 @@ import com.karthiban.powermotivation.model.*
 import kotlinx.coroutines.*
 import kotlin.math.abs
 
-/**
- * v3.0 Strict Home-Screen-Only & Lock-Screen-Only Widget Engine:
- * 1. NEVER wakes the screen when turned off.
- * 2. Immediately stops video playback when screen turns off (`ACTION_SCREEN_OFF`).
- * 3. NEVER uses wake locks, allowing normal Android screen timeout to turn off the display.
- * 4. On Lock Screen (`ACTION_SCREEN_ON` while keyguard locked): Shows widget on Lock Screen using Lock Screen settings.
- * 5. On Home Screen (`ACTION_USER_PRESENT` or Launcher active): Shows widget on Home Screen using Home Screen settings.
- * 6. When opening ANY other app: Immediately hides the widget and pauses video so it NEVER floats over other apps.
- */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class LockScreenKeyguardService : Service() {
 
@@ -65,13 +56,10 @@ class LockScreenKeyguardService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
-                    // Screen turned OFF -> Immediately stop all playback and hide widget.
-                    // NEVER turn screen back on!
                     isScreenInteractive = false
                     hideWidgetAndPause()
                 }
                 Intent.ACTION_SCREEN_ON -> {
-                    // User pressed power button to turn screen ON -> Check if on Lock Screen or Home Screen
                     isScreenInteractive = true
                     val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
                     if (km.isKeyguardLocked) {
@@ -83,7 +71,6 @@ class LockScreenKeyguardService : Service() {
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
-                    // User unlocked the device -> Switch from Lock Screen settings to Home Screen settings
                     isScreenInteractive = true
                     if (isCurrentlyOnHomeLauncher) {
                         switchContextAndShow(DisplayContext.HOME_SCREEN)
@@ -102,7 +89,6 @@ class LockScreenKeyguardService : Service() {
                     } else if (isHome) {
                         switchContextAndShow(DisplayContext.HOME_SCREEN)
                     } else {
-                        // User opened another app -> Immediately hide widget!
                         hideWidgetAndPause()
                     }
                 }
@@ -148,8 +134,8 @@ class LockScreenKeyguardService : Service() {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         val resolves = packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
         val pkgs = resolves.map { it.activityInfo.packageName }.toMutableSet()
-        pkgs.add("com.mi.android.globallauncher") // POCO Launcher
-        pkgs.add("com.miui.home") // MIUI Home
+        pkgs.add("com.mi.android.globallauncher")
+        pkgs.add("com.miui.home")
         launcherPackages = pkgs
     }
 
@@ -165,13 +151,13 @@ class LockScreenKeyguardService : Service() {
                 cornerRadius = 18f * density
             }
             clipToOutline = true
-            keepScreenOn = false // Strictly allow normal screen timeout!
+            setKeepScreenOn(false)
             visibility = View.GONE
         }
 
         val pView = PlayerView(this).apply {
             useController = false
-            keepScreenOn = false // Strictly allow normal screen timeout!
+            setKeepScreenOn(false)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -181,7 +167,7 @@ class LockScreenKeyguardService : Service() {
 
         val iView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            keepScreenOn = false
+            setKeepScreenOn(false)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -451,7 +437,7 @@ class LockScreenKeyguardService : Service() {
     private fun getOrCreatePlayer(): ExoPlayer {
         exoPlayer?.let { return it }
         return ExoPlayer.Builder(this).build().also { player ->
-            player.wakeMode = C.WAKE_MODE_NONE // Strictly no wake lock so phone sleeps normally
+            player.wakeMode = C.WAKE_MODE_NONE
             playerView?.player = player
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -464,10 +450,6 @@ class LockScreenKeyguardService : Service() {
         }
     }
 
-    /**
-     * Fallback poller in case Usage Access is enabled instead of Accessibility Service.
-     * Checks every 400ms and hides widget immediately when not on Home Screen or Lock Screen.
-     */
     private fun startFallbackHomeMonitor() {
         monitorJob?.cancel()
         monitorJob = serviceScope.launch {
