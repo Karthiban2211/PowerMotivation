@@ -151,13 +151,13 @@ class LockScreenKeyguardService : Service() {
                 cornerRadius = 18f * density
             }
             clipToOutline = true
-            setKeepScreenOn(false)
+            keepScreenOn = false
             visibility = View.GONE
         }
 
         val pView = PlayerView(this).apply {
             useController = false
-            setKeepScreenOn(false)
+            keepScreenOn = false
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -167,7 +167,7 @@ class LockScreenKeyguardService : Service() {
 
         val iView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            setKeepScreenOn(false)
+            keepScreenOn = false
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -437,7 +437,7 @@ class LockScreenKeyguardService : Service() {
     private fun getOrCreatePlayer(): ExoPlayer {
         exoPlayer?.let { return it }
         return ExoPlayer.Builder(this).build().also { player ->
-            player.wakeMode = C.WAKE_MODE_NONE
+            player.setWakeMode(C.WAKE_MODE_NONE)
             playerView?.player = player
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
