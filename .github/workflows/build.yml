@@ -1,4 +1,4 @@
-name: Build Power Motivation APK v2
+name: Build Power Motivation APK v3
 
 on:
   push:
@@ -32,8 +32,8 @@ jobs:
       - name: Publish APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: "Power Motivation v2.0 (Autoplay Home & Lock Widget)"
+          tag_name: v3.0.0
+          name: "Power Motivation v3.0 (Home-Only & Lock-Only Autoplay Widget)"
           files: app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

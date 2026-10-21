@@ -17,6 +17,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -25,15 +26,17 @@ import androidx.media3.ui.PlayerView
 import com.karthiban.powermotivation.PowerMotivationApp
 import com.karthiban.powermotivation.R
 import com.karthiban.powermotivation.model.*
-import com.karthiban.powermotivation.ui.WidgetPlayerActivity
 import kotlinx.coroutines.*
 import kotlin.math.abs
 
 /**
- * Core Engine that delivers:
- * 1. Direct Autoplay Home Screen Widget (WindowManager hardware surface that plays automatically
- *    when unlocked on the Home Screen, and supports direct Left/Right swipes without opening any app).
- * 2. Automatic Lock Screen Widget (Automatically displays and plays on Lock Screen as soon as screen turns on).
+ * v3.0 Strict Home-Screen-Only & Lock-Screen-Only Widget Engine:
+ * 1. NEVER wakes the screen when turned off.
+ * 2. Immediately stops video playback when screen turns off (`ACTION_SCREEN_OFF`).
+ * 3. NEVER uses wake locks, allowing normal Android screen timeout to turn off the display.
+ * 4. On Lock Screen (`ACTION_SCREEN_ON` while keyguard locked): Shows widget on Lock Screen using Lock Screen settings.
+ * 5. On Home Screen (`ACTION_USER_PRESENT` or Launcher active): Shows widget on Home Screen using Home Screen settings.
+ * 6. When opening ANY other app: Immediately hides the widget and pauses video so it NEVER floats over other apps.
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class LockScreenKeyguardService : Service() {
@@ -52,7 +55,9 @@ class LockScreenKeyguardService : Service() {
     private var settings: ContextSettings = ContextSettings()
     private var playlist: List<MediaItemEntity> = emptyList()
     private var currentIndex: Int = 0
+
     private var isScreenInteractive: Boolean = true
+    private var isCurrentlyOnHomeLauncher: Boolean = true
     private var launcherPackages: Set<String> = emptySet()
     private var monitorJob: Job? = null
 
@@ -60,39 +65,56 @@ class LockScreenKeyguardService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    // Screen turned OFF -> Immediately stop all playback and hide widget.
+                    // NEVER turn screen back on!
                     isScreenInteractive = false
-                    pausePlayback()
-                    // Pre-launch Lock Screen Widget so it's immediately visible when screen turns on
-                    serviceScope.launch {
-                        val lockSettings = PowerMotivationApp.instance.settingsRepository
-                            .getSettingsSync(DisplayContext.LOCK_SCREEN)
-                        if (lockSettings.isEnabled) {
-                            launchLockScreenActivity()
-                        }
-                    }
+                    hideWidgetAndPause()
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    // User pressed power button to turn screen ON -> Check if on Lock Screen or Home Screen
                     isScreenInteractive = true
                     val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
                     if (km.isKeyguardLocked) {
-                        serviceScope.launch {
-                            val lockSettings = PowerMotivationApp.instance.settingsRepository
-                                .getSettingsSync(DisplayContext.LOCK_SCREEN)
-                            if (lockSettings.isEnabled) {
-                                launchLockScreenActivity()
-                            }
-                        }
+                        switchContextAndShow(DisplayContext.LOCK_SCREEN)
+                    } else if (isCurrentlyOnHomeLauncher) {
+                        switchContextAndShow(DisplayContext.HOME_SCREEN)
                     } else {
-                        switchContextAndResume(DisplayContext.HOME_SCREEN)
+                        hideWidgetAndPause()
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
-                    // User just unlocked the POCO M2 -> Immediately autoplay Home Screen Widget!
+                    // User unlocked the device -> Switch from Lock Screen settings to Home Screen settings
                     isScreenInteractive = true
-                    switchContextAndResume(DisplayContext.HOME_SCREEN)
+                    if (isCurrentlyOnHomeLauncher) {
+                        switchContextAndShow(DisplayContext.HOME_SCREEN)
+                    } else {
+                        hideWidgetAndPause()
+                    }
+                }
+                ACTION_HOME_VISIBILITY -> {
+                    val isHome = intent.getBooleanExtra(EXTRA_IS_HOME, false)
+                    isCurrentlyOnHomeLauncher = isHome
+                    val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                    if (!isScreenInteractive) {
+                        hideWidgetAndPause()
+                    } else if (km.isKeyguardLocked) {
+                        switchContextAndShow(DisplayContext.LOCK_SCREEN)
+                    } else if (isHome) {
+                        switchContextAndShow(DisplayContext.HOME_SCREEN)
+                    } else {
+                        // User opened another app -> Immediately hide widget!
+                        hideWidgetAndPause()
+                    }
                 }
                 ACTION_RELOAD_ENGINE -> {
-                    switchContextAndResume(activeContext, forceReload = true)
+                    if (isScreenInteractive) {
+                        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                        if (km.isKeyguardLocked) {
+                            switchContextAndShow(DisplayContext.LOCK_SCREEN, forceReload = true)
+                        } else if (isCurrentlyOnHomeLauncher) {
+                            switchContextAndShow(DisplayContext.HOME_SCREEN, forceReload = true)
+                        }
+                    }
                 }
             }
         }
@@ -103,31 +125,23 @@ class LockScreenKeyguardService : Service() {
         startMinimalNotification()
         resolveLauncherPackages()
 
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        isScreenInteractive = pm.isInteractive
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)
+            addAction(ACTION_HOME_VISIBILITY)
             addAction(ACTION_RELOAD_ENGINE)
         }
         registerReceiver(screenStateReceiver, filter)
 
         if (Settings.canDrawOverlays(this)) {
             createFloatingWidgetWindow()
-            switchContextAndResume(DisplayContext.HOME_SCREEN, forceReload = true)
+            hideWidgetAndPause()
         }
-        startForegroundAppMonitor()
-    }
-
-    private fun launchLockScreenActivity() {
-        val lockIntent = Intent(this, WidgetPlayerActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_NO_ANIMATION
-            putExtra(WidgetPlayerActivity.EXTRA_CONTEXT_MODE, DisplayContext.LOCK_SCREEN.name)
-        }
-        try {
-            startActivity(lockIntent)
-        } catch (_: Exception) {}
+        startFallbackHomeMonitor()
     }
 
     private fun resolveLauncherPackages() {
@@ -151,10 +165,13 @@ class LockScreenKeyguardService : Service() {
                 cornerRadius = 18f * density
             }
             clipToOutline = true
+            keepScreenOn = false // Strictly allow normal screen timeout!
+            visibility = View.GONE
         }
 
         val pView = PlayerView(this).apply {
             useController = false
+            keepScreenOn = false // Strictly allow normal screen timeout!
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -164,6 +181,7 @@ class LockScreenKeyguardService : Service() {
 
         val iView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
+            keepScreenOn = false
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -222,7 +240,6 @@ class LockScreenKeyguardService : Service() {
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onLongPress(e: MotionEvent) {
-                // Long press allows dragging the widget anywhere on the Home Screen
                 isDraggingWidget = true
             }
 
@@ -237,9 +254,9 @@ class LockScreenKeyguardService : Service() {
                 val diffY = e2.y - e1.y
                 if (abs(diffX) > abs(diffY) && abs(diffX) > 60 && abs(velocityX) > 60) {
                     if (diffX < 0) {
-                        navigateRelative(1) // Swipe Left -> Next video/photo
+                        navigateRelative(1)
                     } else {
-                        navigateRelative(-1) // Swipe Right -> Previous video/photo
+                        navigateRelative(-1)
                     }
                     return true
                 }
@@ -280,20 +297,22 @@ class LockScreenKeyguardService : Service() {
         container.addView(volBtn)
 
         val (wPx, hPx) = computeWidgetSizePx("LARGE")
+        @Suppress("DEPRECATION")
         val params = WindowManager.LayoutParams(
             wPx,
             hPx,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
-                @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = (110 * density).toInt()
+            y = (120 * density).toInt()
         }
 
         floatingRoot = container
@@ -331,29 +350,34 @@ class LockScreenKeyguardService : Service() {
         }
     }
 
-    private fun switchContextAndResume(targetContext: DisplayContext, forceReload: Boolean = false) {
+    private fun hideWidgetAndPause() {
+        floatingRoot?.visibility = View.GONE
+        exoPlayer?.pause()
+    }
+
+    private fun switchContextAndShow(targetContext: DisplayContext, forceReload: Boolean = false) {
         serviceScope.launch {
-            if (!Settings.canDrawOverlays(this@LockScreenKeyguardService)) return@launch
+            if (!isScreenInteractive || !Settings.canDrawOverlays(this@LockScreenKeyguardService)) {
+                hideWidgetAndPause()
+                return@launch
+            }
             if (floatingRoot == null) createFloatingWidgetWindow()
 
             val app = PowerMotivationApp.instance
+            val contextChanged = activeContext != targetContext
             activeContext = targetContext
             settings = app.settingsRepository.getSettingsSync(targetContext)
 
             if (!settings.isEnabled) {
-                floatingRoot?.visibility = View.GONE
-                pausePlayback()
+                hideWidgetAndPause()
                 return@launch
             }
 
-            if (targetContext == DisplayContext.HOME_SCREEN) {
-                updateWidgetSizeIfNeeded(settings.widgetSizePreset)
-            }
+            updateWidgetSizeIfNeeded(settings.widgetSizePreset)
 
             val newList = app.mediaRepository.getFilteredPlaylist(targetContext)
-            if (forceReload || newList != playlist) {
-                playlist = newList
-            }
+            val listChanged = newList != playlist
+            playlist = newList
 
             floatingRoot?.visibility = View.VISIBLE
             if (playlist.isEmpty()) {
@@ -361,13 +385,16 @@ class LockScreenKeyguardService : Service() {
                 playerView?.visibility = View.GONE
                 photoView?.visibility = View.GONE
                 volumeBtn?.visibility = View.GONE
-                pausePlayback()
+                exoPlayer?.pause()
                 return@launch
             }
 
             emptyLabel?.visibility = View.GONE
-            currentIndex = settings.currentIndex.coerceIn(playlist.indices)
-            renderActiveItem()
+            val targetIdx = settings.currentIndex.coerceIn(playlist.indices)
+            if (forceReload || contextChanged || listChanged || currentIndex != targetIdx || exoPlayer?.isPlaying != true) {
+                currentIndex = targetIdx
+                renderActiveItem()
+            }
         }
     }
 
@@ -381,7 +408,7 @@ class LockScreenKeyguardService : Service() {
     }
 
     private fun renderActiveItem() {
-        if (playlist.isEmpty() || currentIndex !in playlist.indices) return
+        if (!isScreenInteractive || playlist.isEmpty() || currentIndex !in playlist.indices) return
         val item = playlist[currentIndex]
 
         if (settings.scaleMode == ScaleMode.CROP) {
@@ -424,6 +451,7 @@ class LockScreenKeyguardService : Service() {
     private fun getOrCreatePlayer(): ExoPlayer {
         exoPlayer?.let { return it }
         return ExoPlayer.Builder(this).build().also { player ->
+            player.wakeMode = C.WAKE_MODE_NONE // Strictly no wake lock so phone sleeps normally
             playerView?.player = player
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -436,59 +464,50 @@ class LockScreenKeyguardService : Service() {
         }
     }
 
-    private fun pausePlayback() {
-        exoPlayer?.pause()
-    }
-
     /**
-     * Automatically hides the Home Screen widget when the user opens another app
-     * (when Usage Stats permission is granted), and auto-resumes as soon as they return to Home Screen.
+     * Fallback poller in case Usage Access is enabled instead of Accessibility Service.
+     * Checks every 400ms and hides widget immediately when not on Home Screen or Lock Screen.
      */
-    private fun startForegroundAppMonitor() {
+    private fun startFallbackHomeMonitor() {
         monitorJob?.cancel()
         monitorJob = serviceScope.launch {
             while (isActive) {
-                delay(900)
-                if (!isScreenInteractive || floatingRoot == null) continue
-
-                val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                if (km.isKeyguardLocked) {
-                    // While keyguard is locked, LockScreen Widget Activity handles playback
-                    if (floatingRoot?.visibility == View.VISIBLE) {
-                        floatingRoot?.visibility = View.GONE
-                        pausePlayback()
+                delay(400)
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (!pm.isInteractive) {
+                    if (isScreenInteractive) {
+                        isScreenInteractive = false
+                        hideWidgetAndPause()
                     }
                     continue
                 }
+                isScreenInteractive = true
 
-                val currentPkg = getTopPackageName()
-                if (currentPkg != null) {
-                    val isOnHomeLauncher = launcherPackages.contains(currentPkg)
-                    if (isOnHomeLauncher && settings.isEnabled) {
-                        if (floatingRoot?.visibility != View.VISIBLE) {
-                            floatingRoot?.visibility = View.VISIBLE
-                            if (playlist.getOrNull(currentIndex)?.mediaType == MediaType.VIDEO &&
-                                settings.autoPlayVideo
-                            ) {
-                                exoPlayer?.play()
-                            }
-                        }
-                    } else if (!isOnHomeLauncher && currentPkg != packageName) {
-                        if (floatingRoot?.visibility == View.VISIBLE) {
-                            floatingRoot?.visibility = View.GONE
-                            pausePlayback()
-                        }
+                val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                if (km.isKeyguardLocked) {
+                    switchContextAndShow(DisplayContext.LOCK_SCREEN)
+                    continue
+                }
+
+                val topPkg = queryTopPackageFromUsageStats()
+                if (topPkg != null) {
+                    val onHome = launcherPackages.contains(topPkg)
+                    isCurrentlyOnHomeLauncher = onHome
+                    if (onHome) {
+                        switchContextAndShow(DisplayContext.HOME_SCREEN)
+                    } else {
+                        hideWidgetAndPause()
                     }
                 }
             }
         }
     }
 
-    private fun getTopPackageName(): String? {
+    private fun queryTopPackageFromUsageStats(): String? {
         return try {
             val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val end = System.currentTimeMillis()
-            val start = end - 10_000
+            val start = end - 60_000
             val events = usm.queryEvents(start, end)
             val event = UsageEvents.Event()
             var lastPkg: String? = null
@@ -509,14 +528,14 @@ class LockScreenKeyguardService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "Power Motivation Autoplay Widget Engine",
+                "Power Motivation Widget Service",
                 NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Power Motivation Active")
-            .setContentText("Autoplay Home & Lock Screen media widget running")
+            .setContentTitle("Power Motivation Widget")
+            .setContentText("Home & Lock Screen widget ready")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()
@@ -526,7 +545,6 @@ class LockScreenKeyguardService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Settings.canDrawOverlays(this)) {
             createFloatingWidgetWindow()
-            switchContextAndResume(DisplayContext.HOME_SCREEN, forceReload = true)
         }
         return START_STICKY
     }
@@ -550,9 +568,20 @@ class LockScreenKeyguardService : Service() {
 
     companion object {
         const val ACTION_RELOAD_ENGINE = "com.karthiban.powermotivation.ACTION_RELOAD_ENGINE"
+        const val ACTION_HOME_VISIBILITY = "com.karthiban.powermotivation.ACTION_HOME_VISIBILITY"
+        const val EXTRA_IS_HOME = "extra_is_home"
+        const val EXTRA_PKG = "extra_pkg"
 
         fun notifyEngineReload(context: Context) {
             context.sendBroadcast(Intent(ACTION_RELOAD_ENGINE))
+        }
+
+        fun notifyHomeVisibilityChanged(context: Context, isHome: Boolean, pkg: String) {
+            val intent = Intent(ACTION_HOME_VISIBILITY).apply {
+                putExtra(EXTRA_IS_HOME, isHome)
+                putExtra(EXTRA_PKG, pkg)
+            }
+            context.sendBroadcast(intent)
         }
     }
 }

@@ -6,7 +6,6 @@
         android:name="android.software.live_wallpaper"
         android:required="false" />
 
-    <!-- Required for Direct Autoplay Floating Home Widget & Auto Lock Screen Wake -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -42,7 +41,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Automatic Lock Screen Widget Activity (Shows immediately when screen turns on) -->
+        <!-- Lock Screen Widget Activity (NEVER turns screen on by itself; only shows when user wakes screen) -->
         <activity
             android:name=".ui.WidgetPlayerActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
@@ -51,11 +50,10 @@
             android:launchMode="singleInstance"
             android:showOnLockScreen="true"
             android:showWhenLocked="true"
-            android:turnScreenOn="true"
+            android:turnScreenOn="false"
             android:taskAffinity=""
             android:theme="@style/Theme.PowerMotivation.FloatingWidget" />
 
-        <!-- Small Square Home Screen Widget Trigger -->
         <receiver
             android:name=".widget.SmallMotivationWidgetProvider"
             android:exported="true"
@@ -71,7 +69,6 @@
                 android:resource="@xml/widget_info_small" />
         </receiver>
 
-        <!-- Large Rectangular Home Screen Widget Trigger -->
         <receiver
             android:name=".widget.LargeMotivationWidgetProvider"
             android:exported="true"
@@ -91,7 +88,7 @@
             android:name=".widget.MotivationWidgetRemoteViewsService"
             android:permission="android.permission.BIND_REMOTEVIEWS" />
 
-        <!-- Live Wallpaper Engine for Lock Screen & Home Screen -->
+        <!-- Live Wallpaper Widget Box Engine (Renders a clean Widget Box on Home & Lock Screen only) -->
         <service
             android:name=".lockscreen.MotivationWallpaperService"
             android:enabled="true"
@@ -106,12 +103,27 @@
                 android:resource="@xml/live_wallpaper_info" />
         </service>
 
-        <!-- Always-On Autoplay Home Screen & Lock Screen Widget Engine Service -->
+        <!-- Home-Only & Lock-Only Widget Service -->
         <service
             android:name=".lockscreen.LockScreenKeyguardService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Instant Home-Screen Detector so widget NEVER shows over other apps -->
+        <service
+            android:name=".lockscreen.HomeScreenDetectorService"
+            android:enabled="true"
+            android:exported="true"
+            android:label="Power Motivation Home Screen Detector"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_home_detector" />
+        </service>
 
         <receiver
             android:name=".lockscreen.BootRestartReceiver"

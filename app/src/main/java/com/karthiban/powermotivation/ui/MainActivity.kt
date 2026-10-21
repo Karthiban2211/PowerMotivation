@@ -1,11 +1,14 @@
 package com.karthiban.powermotivation.ui
 
+import android.app.AppOpsManager
 import android.app.WallpaperManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +19,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.karthiban.powermotivation.PowerMotivationApp
 import com.karthiban.powermotivation.databinding.ActivityMainBinding
+import com.karthiban.powermotivation.lockscreen.HomeScreenDetectorService
 import com.karthiban.powermotivation.lockscreen.LockScreenKeyguardService
 import com.karthiban.powermotivation.lockscreen.MotivationWallpaperService
 import com.karthiban.powermotivation.model.DisplayContext
@@ -36,7 +40,6 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 PowerMotivationApp.instance.mediaRepository.importMediaUris(uris)
                 LockScreenKeyguardService.notifyEngineReload(this@MainActivity)
-                startAutoplayWidgetEngine()
             }
         }
     }
@@ -50,33 +53,86 @@ class MainActivity : AppCompatActivity() {
         setupActionButtons()
         observeSettingsAndLibrary()
 
-        // Automatically start the Always-On Home & Lock Widget Engine if overlay permission is granted
         if (Settings.canDrawOverlays(this)) {
-            startAutoplayWidgetEngine()
+            startWidgetEngineService()
         }
     }
 
-    private fun startAutoplayWidgetEngine() {
-        if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(
-                this,
-                "Please enable 'Display over other apps' so the video widget can autoplay on your Home & Lock screen!",
-                Toast.LENGTH_LONG
-            ).show()
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivity(intent)
-            return
-        }
+    override fun onResume() {
+        super.onResume()
+        // While user is inside Power Motivation settings app, hide the floating widget so it doesn't cover settings
+        LockScreenKeyguardService.notifyHomeVisibilityChanged(this, false, packageName)
+    }
+
+    private fun startWidgetEngineService() {
         val serviceIntent = Intent(this, LockScreenKeyguardService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
         } else {
             startService(serviceIntent)
         }
-        LockScreenKeyguardService.notifyEngineReload(this)
+    }
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isAccessibilityDetectorEnabled(): Boolean {
+        val expected = ComponentName(this, HomeScreenDetectorService::class.java).flattenToString()
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.contains(expected)
+    }
+
+    private fun activateHomeOnlyAutoplayWidget() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(
+                this,
+                "Step 1: Enable 'Display over other apps'",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+            return
+        }
+
+        if (!isAccessibilityDetectorEnabled() && !hasUsageStatsPermission()) {
+            Toast.makeText(
+                this,
+                "Step 2: Enable 'Usage Access' for Power Motivation so the widget ONLY shows on your Home Screen and hides in other apps!",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            return
+        }
+
+        startWidgetEngineService()
+        Toast.makeText(
+            this,
+            "Home-Only & Lock-Only Widget Active! Press Home to see it.",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun setupMediaLibraryRecyclerView() {
@@ -132,15 +188,9 @@ class MainActivity : AppCompatActivity() {
             pickMultipleMediaLauncher.launch(arrayOf("image/*", "video/*"))
         }
 
-        binding.btnLaunchFloatingWidget.text = "Activate Autoplay Widget"
+        binding.btnLaunchFloatingWidget.text = "Enable Home-Only Widget"
         binding.btnLaunchFloatingWidget.setOnClickListener {
-            startAutoplayWidgetEngine()
-            // Also open Usage Access settings if user wants automatic hide when opening other apps
-            Toast.makeText(
-                this,
-                "Autoplay Home & Lock Screen Widget Activated! Go to your Home Screen or Lock Screen.",
-                Toast.LENGTH_LONG
-            ).show()
+            activateHomeOnlyAutoplayWidget()
         }
 
         binding.btnActivateLockWallpaper.setOnClickListener {
@@ -234,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchLockKeyguardOverlay.setOnCheckedChangeListener { _, isChecked ->
             lifecycleScope.launch { settingsRepo.updateKeyguardWake(isChecked) }
             if (isChecked) {
-                startAutoplayWidgetEngine()
+                activateHomeOnlyAutoplayWidget()
             }
         }
     }
