@@ -32,7 +32,6 @@ class SettingsRepository(private val context: Context) {
         val LOCK_LOOP = booleanPreferencesKey("lock_loop")
         val LOCK_SCALE = stringPreferencesKey("lock_scale")
         val LOCK_INDEX = intPreferencesKey("lock_index")
-        val LOCK_KEYGUARD_WAKE = booleanPreferencesKey("lock_keyguard_wake")
     }
 
     val homeSettingsFlow: Flow<ContextSettings> = context.dataStore.data.map { prefs ->
@@ -61,10 +60,6 @@ class SettingsRepository(private val context: Context) {
             currentIndex = prefs[Keys.LOCK_INDEX] ?: 0,
             widgetSizePreset = "FULL"
         )
-    }
-
-    val isKeyguardWakeEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[Keys.LOCK_KEYGUARD_WAKE] ?: false
     }
 
     suspend fun getSettingsSync(displayContext: DisplayContext): ContextSettings {
@@ -130,12 +125,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateWidgetSizePreset(preset: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.HOME_SIZE_PRESET] = preset
-        }
-    }
-
-    suspend fun updateKeyguardWake(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.LOCK_KEYGUARD_WAKE] = enabled
         }
     }
 }

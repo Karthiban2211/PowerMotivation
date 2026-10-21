@@ -8,6 +8,7 @@ import android.service.wallpaper.WallpaperService
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.SurfaceHolder
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -132,13 +133,13 @@ class MotivationWallpaperService : WallpaperService() {
                 settings = app.settingsRepository.getSettingsSync(currentContextMode)
                 if (!settings.isEnabled) {
                     exoPlayer?.stop()
-                    drawBlankSurface("Experience disabled in settings")
+                    drawBlankSurface("Disabled in settings")
                     return@launch
                 }
                 playlist = app.mediaRepository.getFilteredPlaylist(currentContextMode)
                 if (playlist.isEmpty()) {
                     exoPlayer?.stop()
-                    drawBlankSurface("Add motivational photos or videos in Power Motivation app")
+                    drawBlankSurface("Add photos or videos in Power Motivation app")
                     return@launch
                 }
                 currentIndex = settings.currentIndex.coerceIn(playlist.indices)
@@ -187,32 +188,13 @@ class MotivationWallpaperService : WallpaperService() {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
                     canvas.drawColor(Color.BLACK)
-                    val srcRatio = bmp.width.toFloat() / bmp.height
-                    val dstRatio = surfaceWidth.toFloat() / surfaceHeight
-
-                    if (settings.scaleMode == ScaleMode.CROP) {
-                        val srcRect = if (srcRatio > dstRatio) {
-                            val newW = (bmp.height * dstRatio).toInt()
-                            val left = (bmp.width - newW) / 2
-                            Rect(left, 0, left + newW, bmp.height)
-                        } else {
-                            val newH = (bmp.width / dstRatio).toInt()
-                            val top = (bmp.height - newH) / 2
-                            Rect(0, top, bmp.width, top + newH)
-                        }
-                        canvas.drawBitmap(bmp, srcRect, Rect(0, 0, surfaceWidth, surfaceHeight), paint)
-                    } else {
-                        val dstRect = if (srcRatio > dstRatio) {
-                            val drawH = (surfaceWidth / srcRatio).toInt()
-                            val top = (surfaceHeight - drawH) / 2
-                            Rect(0, top, surfaceWidth, top + drawH)
-                        } else {
-                            val drawW = (surfaceHeight * srcRatio).toInt()
-                            val left = (surfaceWidth - drawW) / 2
-                            Rect(left, 0, left + drawW, surfaceHeight)
-                        }
-                        canvas.drawBitmap(bmp, null, dstRect, paint)
-                    }
+                    val formatted = PowerMotivationApp.instance.mediaRepository.formatBitmapForWidget(
+                        bmp,
+                        surfaceWidth,
+                        surfaceHeight,
+                        settings.scaleMode
+                    )
+                    canvas.drawBitmap(formatted, 0f, 0f, paint)
                 }
             } catch (_: Exception) {
             } finally {
@@ -247,8 +229,9 @@ class MotivationWallpaperService : WallpaperService() {
 
         private fun getOrCreatePlayer(): ExoPlayer {
             exoPlayer?.let { return it }
-            return ExoPlayer.Builder(this@MotivationWallpaperService).build().also {
-                exoPlayer = it
+            return ExoPlayer.Builder(this@MotivationWallpaperService).build().also { player ->
+                player.setWakeMode(C.WAKE_MODE_NONE)
+                exoPlayer = player
             }
         }
 

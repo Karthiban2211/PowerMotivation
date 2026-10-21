@@ -1,4 +1,4 @@
-name: Build Power Motivation APK v3
+name: Build Power Motivation APK v4
 
 on:
   push:
@@ -27,13 +27,13 @@ jobs:
           cache-disabled: true
 
       - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Publish APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.0.0
-          name: "Power Motivation v3.0 (Home-Only & Lock-Only Autoplay Widget)"
+          tag_name: v4.0.${{ github.run_number }}
+          name: "Power Motivation v4.0.${{ github.run_number }} (Pure Normal Home Widget)"
           files: app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

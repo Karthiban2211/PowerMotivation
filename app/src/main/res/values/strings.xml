@@ -2,7 +2,7 @@
     <string name="app_name">Power Motivation</string>
     <string name="widget_small_name">Power Motivation (Small Square)</string>
     <string name="widget_large_name">Power Motivation (Large Rectangular)</string>
-    <string name="wallpaper_service_name">Power Motivation Live Player</string>
+    <string name="wallpaper_service_name">Power Motivation Lock Player</string>
     <string name="wallpaper_description">Swipeable motivational photos &amp; videos with independent Lock Screen &amp; Home Screen audio settings.</string>
     <string name="widget_empty_prompt">Tap to open Power Motivation &amp; add photos or videos</string>
     <string name="home_widget_disabled">Home Screen Widget Disabled in Settings</string>

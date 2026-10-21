@@ -6,20 +6,9 @@
         android:name="android.software.live_wallpaper"
         android:required="false" />
 
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission
-        android:name="android.permission.PACKAGE_USAGE_STATS"
-        tools:ignore="ProtectedPermissions" />
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.HOME" />
-        </intent>
-    </queries>
 
     <application
         android:name=".PowerMotivationApp"
@@ -41,27 +30,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Lock Screen Widget Activity (NEVER turns screen on by itself; only shows when user wakes screen) -->
-        <activity
-            android:name=".ui.WidgetPlayerActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:launchMode="singleInstance"
-            android:showOnLockScreen="true"
-            android:showWhenLocked="true"
-            android:turnScreenOn="false"
-            android:taskAffinity=""
-            android:theme="@style/Theme.PowerMotivation.FloatingWidget" />
-
+        <!-- Small Square Normal Home Screen Widget -->
         <receiver
             android:name=".widget.SmallMotivationWidgetProvider"
             android:exported="true"
             android:label="@string/widget_small_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_PREV" />
+                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_NEXT" />
                 <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_MUTE_TOGGLE" />
-                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_OPEN_PLAYER" />
                 <action android:name="com.karthiban.powermotivation.ACTION_REFRESH_WIDGETS" />
             </intent-filter>
             <meta-data
@@ -69,14 +47,16 @@
                 android:resource="@xml/widget_info_small" />
         </receiver>
 
+        <!-- Large Rectangular Normal Home Screen Widget -->
         <receiver
             android:name=".widget.LargeMotivationWidgetProvider"
             android:exported="true"
             android:label="@string/widget_large_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_PREV" />
+                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_NEXT" />
                 <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_MUTE_TOGGLE" />
-                <action android:name="com.karthiban.powermotivation.ACTION_WIDGET_OPEN_PLAYER" />
                 <action android:name="com.karthiban.powermotivation.ACTION_REFRESH_WIDGETS" />
             </intent-filter>
             <meta-data
@@ -84,11 +64,14 @@
                 android:resource="@xml/widget_info_large" />
         </receiver>
 
+        <!-- Native Widget Frame Engine (Streams video frames directly into the normal Home Screen Widget!) -->
         <service
-            android:name=".widget.MotivationWidgetRemoteViewsService"
-            android:permission="android.permission.BIND_REMOTEVIEWS" />
+            android:name=".widget.NativeWidgetVideoService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
-        <!-- Live Wallpaper Widget Box Engine (Renders a clean Widget Box on Home & Lock Screen only) -->
+        <!-- Lock Screen Live Wallpaper Engine -->
         <service
             android:name=".lockscreen.MotivationWallpaperService"
             android:enabled="true"
@@ -102,37 +85,6 @@
                 android:name="android.service.wallpaper"
                 android:resource="@xml/live_wallpaper_info" />
         </service>
-
-        <!-- Home-Only & Lock-Only Widget Service -->
-        <service
-            android:name=".lockscreen.LockScreenKeyguardService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-
-        <!-- Instant Home-Screen Detector so widget NEVER shows over other apps -->
-        <service
-            android:name=".lockscreen.HomeScreenDetectorService"
-            android:enabled="true"
-            android:exported="true"
-            android:label="Power Motivation Home Screen Detector"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_home_detector" />
-        </service>
-
-        <receiver
-            android:name=".lockscreen.BootRestartReceiver"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
 
     </application>
 </manifest>

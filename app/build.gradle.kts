@@ -12,8 +12,8 @@ android {
         applicationId = "com.karthiban.powermotivation"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 4
+        versionName = "4.0.0"
 
         javaCompileOptions {
             annotationProcessorOptions {

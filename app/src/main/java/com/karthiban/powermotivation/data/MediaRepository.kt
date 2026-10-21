@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -11,7 +13,8 @@ import com.karthiban.powermotivation.model.DisplayContext
 import com.karthiban.powermotivation.model.MediaItemEntity
 import com.karthiban.powermotivation.model.MediaType
 import com.karthiban.powermotivation.model.PlaylistTarget
-import com.karthiban.powermotivation.widget.BaseMotivationWidgetProvider
+import com.karthiban.powermotivation.model.ScaleMode
+import com.karthiban.powermotivation.widget.NativeWidgetVideoService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -74,12 +77,12 @@ class MediaRepository(
                 )
                 mediaDao.insertMedia(entity)
             }
-            BaseMotivationWidgetProvider.notifyAllWidgetsChanged(context)
+            NativeWidgetVideoService.notifyPlaylistOrSettingsChanged(context)
         }
 
     suspend fun removeMedia(item: MediaItemEntity) = withContext(Dispatchers.IO) {
         mediaDao.deleteMedia(item)
-        BaseMotivationWidgetProvider.notifyAllWidgetsChanged(context)
+        NativeWidgetVideoService.notifyPlaylistOrSettingsChanged(context)
     }
 
     suspend fun moveItem(fromPosition: Int, toPosition: Int, currentList: List<MediaItemEntity>) =
@@ -90,7 +93,7 @@ class MediaRepository(
             mutable.add(toPosition, moved)
             val reindexed = mutable.mapIndexed { index, item -> item.copy(sortOrder = index) }
             mediaDao.updateMedia(reindexed)
-            BaseMotivationWidgetProvider.notifyAllWidgetsChanged(context)
+            NativeWidgetVideoService.notifyPlaylistOrSettingsChanged(context)
         }
 
     suspend fun cyclePlaylistTarget(item: MediaItemEntity) = withContext(Dispatchers.IO) {
@@ -100,7 +103,7 @@ class MediaRepository(
             PlaylistTarget.LOCK_ONLY -> PlaylistTarget.BOTH
         }
         mediaDao.updateMedia(listOf(item.copy(playlistTarget = nextTarget)))
-        BaseMotivationWidgetProvider.notifyAllWidgetsChanged(context)
+        NativeWidgetVideoService.notifyPlaylistOrSettingsChanged(context)
     }
 
     fun loadScaledBitmap(
@@ -144,6 +147,43 @@ class MediaRepository(
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun formatBitmapForWidget(
+        src: Bitmap,
+        targetW: Int,
+        targetH: Int,
+        scaleMode: ScaleMode
+    ): Bitmap {
+        val output = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.RGB_565)
+        val canvas = Canvas(output)
+        val srcRatio = src.width.toFloat() / src.height
+        val dstRatio = targetW.toFloat() / targetH
+
+        if (scaleMode == ScaleMode.CROP) {
+            val srcRect = if (srcRatio > dstRatio) {
+                val newW = (src.height * dstRatio).toInt()
+                val left = (src.width - newW) / 2
+                Rect(left, 0, left + newW, src.height)
+            } else {
+                val newH = (src.width / dstRatio).toInt()
+                val top = (src.height - newH) / 2
+                Rect(0, top, src.width, top + newH)
+            }
+            canvas.drawBitmap(src, srcRect, Rect(0, 0, targetW, targetH), null)
+        } else {
+            val dstRect = if (srcRatio > dstRatio) {
+                val drawH = (targetW / srcRatio).toInt()
+                val top = (targetH - drawH) / 2
+                Rect(0, top, targetW, top + drawH)
+            } else {
+                val drawW = (targetH * srcRatio).toInt()
+                val left = (targetW - drawW) / 2
+                Rect(left, 0, left + drawW, targetH)
+            }
+            canvas.drawBitmap(src, null, dstRect, null)
+        }
+        return output
     }
 
     private fun scaleDownBitmap(source: Bitmap, maxW: Int, maxH: Int): Bitmap {
